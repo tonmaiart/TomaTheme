@@ -1,0 +1,29 @@
+name: Release
+
+on:
+  push:
+    tags: ["[0-9]+.[0-9]+.[0-9]+"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build extension zip
+        run: python3 scripts/build_zip.py --expect-version "${GITHUB_REF_NAME}"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Delete first so re-releasing the same version replaces it instead of failing.
+          gh release delete "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --yes || true
+          gh release create "${GITHUB_REF_NAME}" dist/*.zip \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "Tomatactics ${GITHUB_REF_NAME}" \
+            --verify-tag \
+            --notes "Install: download the .zip below (not \"Source code\") and drag it into Blender 5.1 or newer, or use Edit > Preferences > Get Extensions > Install from Disk."
