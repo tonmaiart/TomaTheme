@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "Tomatactics"
-version = "1.0.0"
+version = "1.0.1"
 name = "Tomatactics"
 tagline = "One-click UI themes for recording clean tutorials"
 maintainer = "Natchapon Srisuk <tomatactics@gmail.com>"

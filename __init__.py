@@ -5,37 +5,19 @@ import os
 import shutil
 
 import bpy
-from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, StringProperty
+from bpy.props import BoolProperty, EnumProperty, StringProperty
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from . import showcase, theme_tune
 
 THEME_NAME = "Tomatactics"
-TUNE_DEFAULTS = dict(
-    theme_brightness=1.0, theme_saturation=1.0, theme_hue=0.0, theme_opaque=True,
-    theme_gradient=True, theme_gradient_strength=1.0, theme_rounded=True,
-)
-
-# Font styles Blender exposes, with their native values: shadow type, offset, alpha, gray value, weight, size.
-TEXT_STYLES = (("widget", "Widget Text"), ("panel_title", "Panel Titles"), ("tooltip", "Tooltips"))
-TEXT_NATIVE = {
-    "widget": dict(shadow='1', shadow_offset_x=0, shadow_offset_y=-1, shadow_alpha=0.5, shadow_value=0.0,
-                   character_weight=400, points=11.0),
-    "panel_title": dict(shadow='3', shadow_offset_x=0, shadow_offset_y=-1, shadow_alpha=0.5, shadow_value=0.0,
-                        character_weight=400, points=11.0),
-    "tooltip": dict(shadow='1', shadow_offset_x=0, shadow_offset_y=-1, shadow_alpha=0.5, shadow_value=0.0,
-                    character_weight=400, points=11.0),
-}
-SHADOW_ITEMS = [
-    ('0', "None", "No shadow"),
-    ('1', "Shadow", "Sharp drop shadow"),
-    ('3', "Blur", "Blurred shadow"),
-    ('5', "Soft Blur", "Wider blurred shadow"),
-    ('6', "Outline", "Outline around every character"),
-]
-for _style, _label in TEXT_STYLES:
-    for _field, _value in TEXT_NATIVE[_style].items():
-        TUNE_DEFAULTS["text_%s_%s" % (_style, _field)] = _value
+# The saved look: Blender's default theme with this tuning on top.
+THEME_TUNING = dict(brightness=1.2, saturation=1.1, hue_shift=2.3, opaque=False,
+                    gradient=True, gradient_strength=0.2, rounded=True)
+_NATIVE_FONT = dict(shadow=1, shadow_offset_x=0, shadow_offset_y=-1, shadow_alpha=0.5, shadow_value=0.0,
+                    character_weight=400, points=11.0)
+TEXT_NATIVE = {"widget": _NATIVE_FONT, "panel_title": dict(_NATIVE_FONT, shadow=3), "tooltip": _NATIVE_FONT}
+TEXT_STYLE = dict(TEXT_NATIVE, widget=dict(_NATIVE_FONT, shadow_alpha=1.0, shadow_value=0.3))
 
 THEME_MENU = "USERPREF_MT_interface_theme_presets"
 VIEWPORT_FILE_TYPE = "tomatactics.viewport_background"
@@ -77,23 +59,12 @@ def is_tuned_theme_active(context):
 
 
 def apply_tuned_theme(context):
-    """Rebuild the theme as Blender's default plus the current tuning."""
-    prefs = get_prefs(context)
-    if prefs is None:
-        return
     _keep_viewport_background(context, bpy.ops.preferences.reset_default_theme)
     theme = context.preferences.themes[0]
-    theme_tune.apply(
-        theme, brightness=prefs.theme_brightness, saturation=prefs.theme_saturation,
-        hue_shift=prefs.theme_hue, opaque=prefs.theme_opaque, gradient=prefs.theme_gradient,
-        gradient_strength=prefs.theme_gradient_strength, rounded=prefs.theme_rounded,
-    )
+    theme_tune.apply(theme, **THEME_TUNING)
     # Marks the theme as ours for the active checkmark; the file itself is only written on export.
     theme.filepath = tuned_theme_path()
-    apply_text_styles(context, {
-        style: {f: getattr(prefs, "text_%s_%s" % (style, f)) for f in TEXT_NATIVE[style]}
-        for style, _label in TEXT_STYLES
-    })
+    apply_text_styles(context, TEXT_STYLE)
 
 
 def apply_text_styles(context, values):
@@ -101,7 +72,7 @@ def apply_text_styles(context, values):
     for style, fields in values.items():
         font = getattr(ui_style, style)
         for field, value in fields.items():
-            setattr(font, field, int(value) if field == "shadow" else value)
+            setattr(font, field, value)
 
 
 def write_tuned_theme(context):
@@ -109,25 +80,6 @@ def write_tuned_theme(context):
     path = tuned_theme_path()
     _rna_xml.xml_file_write(context, path, getattr(bpy.types, THEME_MENU).preset_xml_map)
     return path
-
-
-def tune_values(prefs):
-    return {k: getattr(prefs, k) for k in TUNE_DEFAULTS}
-
-
-def set_tune_values(prefs, values):
-    global _loading
-    _loading = True
-    try:
-        for k, default in TUNE_DEFAULTS.items():
-            setattr(prefs, k, values.get(k, default))
-    finally:
-        _loading = False
-
-
-def _on_tune_change(self, context):
-    if not _loading:
-        apply_tuned_theme(context)
 
 
 def _viewport_gradients(context):
@@ -150,33 +102,8 @@ class TOMATACTICS_OT_apply_theme(bpy.types.Operator):
 
     def execute(self, context):
         apply_tuned_theme(context)
+        write_state(theme=True)
         self.report({'INFO'}, "Applied theme: " + THEME_NAME)
-        return {'FINISHED'}
-
-
-class TOMATACTICS_OT_save_theme(bpy.types.Operator):
-    bl_idname = "tomatactics.save_theme"
-    bl_label = "Save Theme"
-    bl_description = "Keep the current tuning; only saved tuning is restored after restarting Blender"
-    bl_options = {'REGISTER'}
-
-    def execute(self, context):
-        prefs = get_prefs(context)
-        apply_tuned_theme(context)
-        write_state(theme=tune_values(prefs))
-        self.report({'INFO'}, "Saved theme tuning")
-        return {'FINISHED'}
-
-
-class TOMATACTICS_OT_reset_tuning(bpy.types.Operator):
-    bl_idname = "tomatactics.reset_tuning"
-    bl_label = "Reset Tuning"
-    bl_description = "Return every tuning control to its default"
-    bl_options = {'REGISTER'}
-
-    def execute(self, context):
-        set_tune_values(get_prefs(context), TUNE_DEFAULTS)
-        apply_tuned_theme(context)
         return {'FINISHED'}
 
 
@@ -198,7 +125,7 @@ class TOMATACTICS_OT_reset_theme(bpy.types.Operator):
 class TOMATACTICS_OT_install_themes(bpy.types.Operator):
     bl_idname = "tomatactics.install_themes"
     bl_label = "Add to Preferences Theme List"
-    bl_description = "Copy the theme with the current tuning into Preferences > Themes"
+    bl_description = "Copy the theme into Preferences > Themes"
     bl_options = {'REGISTER'}
 
     def execute(self, context):
@@ -301,35 +228,6 @@ def _on_preset_change(self, context):
 class TomatacticsPreferences(bpy.types.AddonPreferences):
     bl_idname = __package__
 
-    theme_brightness: FloatProperty(
-        name="Brightness", description="Brightness of backgrounds, panels and buttons; text is not affected",
-        default=TUNE_DEFAULTS["theme_brightness"], min=0.3, max=1.5, step=1, update=_on_tune_change,
-    )
-    theme_saturation: FloatProperty(
-        name="Saturation", description="Color intensity of the whole interface",
-        default=TUNE_DEFAULTS["theme_saturation"], min=0.0, max=2.0, step=1, update=_on_tune_change,
-    )
-    theme_hue: FloatProperty(
-        name="Hue", description="Rotate every interface color around the color wheel, in degrees",
-        default=TUNE_DEFAULTS["theme_hue"], min=-180.0, max=180.0, step=100, update=_on_tune_change,
-    )
-    theme_opaque: BoolProperty(
-        name="Opaque", description="Make menus, buttons, panels and headers solid instead of see-through",
-        default=TUNE_DEFAULTS["theme_opaque"], update=_on_tune_change,
-    )
-    theme_gradient: BoolProperty(
-        name="Gradient", description="Shade buttons, menus and tabs with a top-to-bottom gradient",
-        default=TUNE_DEFAULTS["theme_gradient"], update=_on_tune_change,
-    )
-    theme_gradient_strength: FloatProperty(
-        name="Gradient Strength", description="How strong the button gradient is",
-        default=TUNE_DEFAULTS["theme_gradient_strength"], min=0.0, max=2.0, step=1, update=_on_tune_change,
-    )
-    theme_rounded: BoolProperty(
-        name="Rounded", description="Use rounder buttons, menus and panels",
-        default=TUNE_DEFAULTS["theme_rounded"], update=_on_tune_change,
-    )
-
     viewport_preset: EnumProperty(
         name="Viewport Preset", description="Load a viewport background preset",
         items=_preset_items, update=_on_preset_change,
@@ -341,34 +239,9 @@ class TomatacticsPreferences(bpy.types.AddonPreferences):
         theme_on = is_tuned_theme_active(context)
         _quick_row(box, TOMATACTICS_OT_apply_theme.bl_idname, "Set Theme",
                    'CHECKMARK' if theme_on else 'COLOR', theme_on, TOMATACTICS_OT_reset_theme.bl_idname)
-        draw_theme(box, context, self)
         box = self.layout.box()
         box.label(text="Viewport Background", icon='WORLD')
         draw_viewport_background(box, context, self)
-
-
-def _text_props(label):
-    return dict(
-        shadow=lambda d: EnumProperty(name="Shadow", description="Shadow or outline drawn behind %s" % label.lower(),
-                                      items=SHADOW_ITEMS, default=d, update=_on_tune_change),
-        shadow_offset_x=lambda d: IntProperty(name="X", description="Horizontal shadow offset in pixels",
-                                              default=d, min=-10, max=10, update=_on_tune_change),
-        shadow_offset_y=lambda d: IntProperty(name="Y", description="Vertical shadow offset in pixels",
-                                              default=d, min=-10, max=10, update=_on_tune_change),
-        shadow_alpha=lambda d: FloatProperty(name="Opacity", description="Shadow or outline opacity",
-                                             default=d, min=0.0, max=1.0, update=_on_tune_change),
-        shadow_value=lambda d: FloatProperty(name="Brightness", description="Shadow or outline gray, from black to white",
-                                             default=d, min=0.0, max=1.0, update=_on_tune_change),
-        character_weight=lambda d: IntProperty(name="Weight", description="Character weight; 400 is normal, 700 is bold",
-                                               default=d, min=100, max=900, step=100, update=_on_tune_change),
-        points=lambda d: FloatProperty(name="Size", description="Font size in points",
-                                       default=d, min=6.0, max=32.0, update=_on_tune_change),
-    )
-
-
-for _style, _label in TEXT_STYLES:
-    for _field, _make in _text_props(_label).items():
-        TomatacticsPreferences.__annotations__["text_%s_%s" % (_style, _field)] = _make(TEXT_NATIVE[_style][_field])
 
 
 def get_prefs(context):
@@ -512,45 +385,6 @@ def draw_viewport_background(layout, context, prefs):
     row.operator(TOMATACTICS_OT_preset_export.bl_idname, text="Export", icon='EXPORT')
 
 
-def draw_theme(layout, context, prefs):
-    col = layout.column(align=True)
-    col.prop(prefs, "theme_brightness", slider=True)
-    col.prop(prefs, "theme_saturation", slider=True)
-    col.prop(prefs, "theme_hue", slider=True)
-    col = layout.column(align=True)
-    row = col.row(align=True)
-    row.prop(prefs, "theme_gradient", toggle=True)
-    sub = row.row(align=True)
-    sub.active = prefs.theme_gradient
-    sub.prop(prefs, "theme_gradient_strength", text="Strength", slider=True)
-    row = col.row(align=True)
-    row.prop(prefs, "theme_opaque", toggle=True)
-    row.prop(prefs, "theme_rounded", toggle=True)
-
-    header, body = layout.panel("tomatactics_text_style", default_closed=True)
-    header.label(text="Text Style", icon='FONT_DATA')
-    if body is not None:
-        for style, label in TEXT_STYLES:
-            key = "text_%s_" % style
-            box = body.box()
-            box.label(text=label)
-            box.prop(prefs, key + "shadow", text="")
-            col = box.column(align=True)
-            col.active = getattr(prefs, key + "shadow") != '0'
-            row = col.row(align=True)
-            row.prop(prefs, key + "shadow_offset_x")
-            row.prop(prefs, key + "shadow_offset_y")
-            col.prop(prefs, key + "shadow_alpha", slider=True)
-            col.prop(prefs, key + "shadow_value", slider=True)
-            col = box.column(align=True)
-            col.prop(prefs, key + "character_weight")
-            col.prop(prefs, key + "points")
-
-    row = layout.row(align=True)
-    row.operator(TOMATACTICS_OT_save_theme.bl_idname, icon='FILE_TICK')
-    row.operator(TOMATACTICS_OT_reset_tuning.bl_idname, text="", icon='LOOP_BACK')
-
-
 # -----------------------------------------------------------------------------
 # Display
 
@@ -676,16 +510,6 @@ class TOMATACTICS_PT_main(_SidebarPanel, bpy.types.Panel):
         draw_quick(self.layout, context)
 
 
-class TOMATACTICS_PT_theme(_SectionPanel, bpy.types.Panel):
-    bl_idname = "TOMATACTICS_PT_theme"
-    bl_label = "Theme Tuning"
-
-    def draw(self, context):
-        prefs = get_prefs(context)
-        if prefs is not None:
-            draw_theme(self.layout, context, prefs)
-
-
 class TOMATACTICS_PT_viewport_background(_SectionPanel, bpy.types.Panel):
     bl_idname = "TOMATACTICS_PT_viewport_background"
     bl_label = "Viewport Background"
@@ -721,14 +545,13 @@ class TOMATACTICS_PT_display(_SectionPanel, bpy.types.Panel):
 
 
 def restore_saved():
-    """Re-apply the last saved theme tuning and viewport preset so unsaved live edits never survive a restart."""
+    """Re-apply the theme and the last saved viewport preset, so unsaved background edits never survive a restart."""
     context = bpy.context
     prefs = get_prefs(context)
     if prefs is None:
         return None
     state = read_state()
-    if isinstance(state.get("theme"), dict):
-        set_tune_values(prefs, state["theme"])
+    if state.get("theme"):
         apply_tuned_theme(context)
     name = state.get("viewport")
     if name:
@@ -744,8 +567,6 @@ def restore_saved():
 classes = (
     TomatacticsPreferences,
     TOMATACTICS_OT_apply_theme,
-    TOMATACTICS_OT_save_theme,
-    TOMATACTICS_OT_reset_tuning,
     TOMATACTICS_OT_reset_theme,
     TOMATACTICS_OT_install_themes,
     TOMATACTICS_OT_preset_save,
@@ -757,7 +578,6 @@ classes = (
     TOMATACTICS_OT_toggle_fullscreen,
     TOMATACTICS_OT_exit_fullscreen,
     TOMATACTICS_PT_main,
-    TOMATACTICS_PT_theme,
     TOMATACTICS_PT_viewport_background,
     TOMATACTICS_PT_render,
     TOMATACTICS_PT_display,
